@@ -19,6 +19,7 @@
 //#include "crc.h"  // Подсчет по duty
 //#include "led_break.h"
 #include "ble_spp.c"
+//#include "esp_vfs_dev.h"
 #include "controller.h"
 #define TAG "BUTTON"
 #define BUTTON_NUM1 23 // Левая кнопка
@@ -30,7 +31,9 @@
 #define UART_NUM UART_NUM_1
 #define BUF_SIZE 2048
 #define RX_TIMEOUT (1000 / portTICK_PERIOD_MS)
-
+#define TXD_PIN (GPIO_NUM_1)      // TXD0
+#define RXD_PIN (GPIO_NUM_3)      // RXD0
+#define UART_PORT UART_NUM_0   
 
 // Очередь UART
 static QueueHandle_t uart_queue;
@@ -172,7 +175,7 @@ static void button_event_break_end(void *arg, void *data) {
 }
 
 static void button_event_cb1(void *arg, void *data) {
-    //printf("button_event_cb1\n");
+    printf("button_event_cb1\n");
     button_handle_t btn_handle = (button_handle_t)arg;
     button_event_t event = iot_button_get_event(btn_handle);
     if (event >= sizeof(button_event_names) / sizeof(button_event_names[0]) || !button_event_names[event]) return;
@@ -193,8 +196,9 @@ static void button_event_cb1(void *arg, void *data) {
             BUTTON_SINGLE_CLICK_ADD();
         } else if (strcmp(event_name, "BUTTON_PRESS_REPEAT") == 0) {
             BUTTON_PRESS_REPEAT_ADD();          
-        } else if (strcmp(event_name, "BUTTON_LONG_PRESS_HOLD") == 0) {
-            AddSpeed();
+        } else if (strcmp(event_name, "BUTTON_LONG_PRESS_START") == 0) {
+            //AddSpeed();
+            set_relay_state();
         }
         xSemaphoreGive(state_mutex);
     }
@@ -215,12 +219,13 @@ static void button_event_cb2(void *arg, void *data) {
           
         } else if (strcmp(event_name, "BUTTON_PRESS_REPEAT") == 0) {
             BUTTON_PRESS_REPEAT_DEC();
-        } else if (strcmp(event_name, "BUTTON_LONG_PRESS_HOLD") == 0) {
-            state.crouise_on = false;
-            if (state.break_level == 1 && state.volt_bl >= state.start_level)
-                state.volt_bl = getStep(false, state.volt_bl);
-            if (state.volt_bl < 0) state.volt_bl = 0;
-            setCurrentLevel();
+        } else if (strcmp(event_name, "BUTTON_LONG_PRESS_START") == 0) {
+            // state.crouise_on = false;
+            // if (state.break_level == 1 && state.volt_bl >= state.start_level)
+            //     state.volt_bl = getStep(false, state.volt_bl);
+            // if (state.volt_bl < 0) state.volt_bl = 0;
+            // setCurrentLevel();
+            pulse_relay();
         }
         xSemaphoreGive(state_mutex);
     }
@@ -257,7 +262,7 @@ static void button_init1(uint32_t button_num) {
     assert(ret == ESP_OK);
     ret |= iot_button_register_cb(btn, BUTTON_PRESS_REPEAT, NULL, button_event_cb1, NULL);
     ret |= iot_button_register_cb(btn, BUTTON_SINGLE_CLICK, NULL, button_event_cb1, NULL);
-    ret |= iot_button_register_cb(btn, BUTTON_LONG_PRESS_HOLD, NULL, button_event_cb1, NULL);
+    ret |= iot_button_register_cb(btn, BUTTON_LONG_PRESS_START, NULL, button_event_cb1, NULL);
     ESP_ERROR_CHECK(ret);
 }
 
@@ -272,7 +277,7 @@ static void button_init2(uint32_t button_num) {
     assert(ret == ESP_OK);
     ret |= iot_button_register_cb(btn, BUTTON_PRESS_REPEAT, NULL, button_event_cb2, NULL);
     ret |= iot_button_register_cb(btn, BUTTON_SINGLE_CLICK, NULL, button_event_cb2, NULL);
-    ret |= iot_button_register_cb(btn, BUTTON_LONG_PRESS_HOLD, NULL, button_event_cb2, NULL);
+    ret |= iot_button_register_cb(btn, BUTTON_LONG_PRESS_START, NULL, button_event_cb2, NULL);
     ESP_ERROR_CHECK(ret);
 }
 
@@ -435,16 +440,34 @@ static void configure_led(void) {
     gpio_config(&io_conf);
 }
 
+// Функция-заглушка, которая игнорирует вывод
+static int log_dummy(const char *fmt, va_list args) {
+    return 0; // Просто возвращаем 0, ничего не выводим
+}
+static int null_output(struct _reent *r, void *fd, const char *ptr, int len) {
+    (void)r;   // Подавляем предупреждение о неиспользуемой переменной
+    (void)fd;  // То же самое для fd
+    return len; // Возвращаем длину, как будто вывод успешен
+}
 void app_main(void) {
-    //state_mutex = xSemaphoreCreateMutex();
+    // esp_log_set_vprintf(log_dummy); // Устанавливаем заглушку на логи esp
+
+    setvbuf(stdout, NULL, _IONBF, 0); // Отключаем буферизацию  
+    stdout->_write = null_output;     // отключает вывод логов по printf
+
+
     controller_init();
     init_button();
     configure_led();
     getDuty(0.0);
     initBreakLight();
-
+    configure_gpio();
+    configure_pulse_gpio();
     gpio_set_direction(POWER_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(POWER_PIN, 0);
+
+    // esp_vfs_dev_uart_use_nonblocking(UART_PORT);
+    // uart_driver_delete(UART_PORT); // Удаляем драйвер консоли
 
     uart_config_t uart_config = {
         .baud_rate = 115200,
@@ -456,8 +479,29 @@ void app_main(void) {
         .source_clk = UART_SCLK_DEFAULT, 
     };
 
+    // uart_config_t uart_config = {
+    //     .baud_rate = 115200,              // Стандартная скорость для прошивки
+    //     .data_bits = UART_DATA_8_BITS,
+    //     .parity = UART_PARITY_DISABLE,
+    //     .stop_bits = UART_STOP_BITS_1,
+    //     .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+    //     .rx_flow_ctrl_thresh = 122,
+    //     .source_clk = UART_SCLK_DEFAULT,
+    // };
+
+    // // Установка UART с буфером
+    // ESP_ERROR_CHECK(uart_driver_install(UART_PORT, BUF_SIZE, BUF_SIZE, 20, &uart_queue, 0));
+    // ESP_ERROR_CHECK(uart_param_config(UART_PORT, &uart_config));
+    // ESP_ERROR_CHECK(uart_set_pin(UART_PORT, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    // ESP_ERROR_CHECK(uart_enable_rx_intr(UART_PORT));
+    // // Минимизируем логи
+    // esp_log_level_set(TAG, ESP_LOG_WARN);
+    // ESP_LOGI(TAG, "UART0 initialized for Type-C");
+
+
     ESP_ERROR_CHECK(uart_param_config(UART_NUM, &uart_config));
     ESP_ERROR_CHECK(uart_set_pin(UART_NUM, 17, 16, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    ESP_ERROR_CHECK(uart_set_pin(UART_PORT, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM, BUF_SIZE, BUF_SIZE, 20, &uart_queue, 0));
     ESP_ERROR_CHECK(uart_enable_rx_intr(UART_NUM));
 

@@ -340,10 +340,12 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
                                 else if (payload[3] > 0) { // Плюс скорость/круиз
                                     if (payload[3] == 1) BUTTON_SINGLE_CLICK_ADD();
                                     else if (payload[3] == 2) BUTTON_PRESS_REPEAT_ADD();
+                                    else if (payload[3] == 3) set_relay_state();
                                 }
                                 else if (payload[4] > 0) { // Минус скорость/круиз
                                     if (payload[4] == 1) BUTTON_SINGLE_CLICK_DEC();
                                     else if (payload[4] == 2) BUTTON_PRESS_REPEAT_DEC();
+                                    else if (payload[4] == 3) pulse_relay();
                                 }
                                 xSemaphoreGive(state_mutex);
                             }
