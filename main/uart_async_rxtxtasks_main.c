@@ -198,6 +198,7 @@ static void button_event_cb1(void *arg, void *data) {
             BUTTON_PRESS_REPEAT_ADD();          
         } else if (strcmp(event_name, "BUTTON_LONG_PRESS_START") == 0) {
             //AddSpeed();
+            state.change_event=21;
             set_relay_state();
         }
         xSemaphoreGive(state_mutex);
@@ -450,7 +451,7 @@ static int null_output(struct _reent *r, void *fd, const char *ptr, int len) {
     return len; // Возвращаем длину, как будто вывод успешен
 }
 void app_main(void) {
-    // esp_log_set_vprintf(log_dummy); // Устанавливаем заглушку на логи esp
+    //esp_log_set_vprintf(log_dummy); // Устанавливаем заглушку на логи esp
 
     setvbuf(stdout, NULL, _IONBF, 0); // Отключаем буферизацию  
     stdout->_write = null_output;     // отключает вывод логов по printf

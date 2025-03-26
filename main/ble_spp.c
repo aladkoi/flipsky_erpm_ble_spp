@@ -14,7 +14,7 @@
 
 
 #define SPP_SERVER_NAME "BLE_FLIPSKY85"
-#define TAG_BL "SPP_EXAMPLE"
+#define TAG_BL "SPP"
 TaskHandle_t send_task_handle = NULL; 
 
 static uint32_t spp_handle = 0; // Дескриптор подключения SPP
