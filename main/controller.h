@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h" // Для SemaphoreHandle_t
 #include "freertos/semphr.h"   // Для мьютекса
 #include "crc.h"
+#include "nvs_storage.h"
 #include "led_break.h"
 #include "relay_control.h"
 #include "relay_pulse.h"
@@ -47,6 +48,8 @@ typedef struct {
     int operation;             // Номер операции (0 - соединение, 1 - телеметрия)
     int change_event;             // событие для мобильного приложения
     int volt_add_speed;
+    bool start_break_event;
+    bool limit_speed;
 } ControllerState_t;
 
 // Глобальные переменные
@@ -55,7 +58,7 @@ extern SemaphoreHandle_t state_mutex;
 extern volatile float level_crouise[6];
 extern volatile int rpm_crouise[6];
 //extern uint8_t speed_data[];
-extern const int len_crouise;
+extern volatile int len_crouise;
 
 // Функции управления состоянием
 void controller_init(void);         // Добавлена инициализация

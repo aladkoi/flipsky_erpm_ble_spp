@@ -9,8 +9,8 @@
 #include "string.h"
 #include "driver/gpio.h"
 #include <math.h>
-#include "esp_intr_alloc.h"
-#include "esp_pm.h"
+//#include "esp_intr_alloc.h"
+//#include "esp_pm.h"
 #include "iot_button.h"
 #include "esp_sleep.h"
 #include <stdio.h>
@@ -27,17 +27,28 @@
 #define BUTTON_ACTIVE_LEVEL 0
 #define BLUE_LED_PIN GPIO_NUM_2
 #define POWER_PIN 4
-#define BREAK_PIN 36 // Вход стоп-сигнала
+#define BREAK_PIN 19 // Вход стоп-сигнала левый
+#define BREAK_RIGTH_PIN 36 /// Вход стоп-сигнала правый
 #define UART_NUM UART_NUM_1
 #define BUF_SIZE 2048
 #define RX_TIMEOUT (1000 / portTICK_PERIOD_MS)
-#define TXD_PIN (GPIO_NUM_1)      // TXD0
-#define RXD_PIN (GPIO_NUM_3)      // RXD0
-#define UART_PORT UART_NUM_0   
+
+#define UART0_PORT_NUM     UART_NUM_0    // UART0 (обычно для USB-to-Serial)
+#define UART0_TXD_PIN      GPIO_NUM_1    // TXD UART0
+#define UART0_RXD_PIN      GPIO_NUM_3    // RXD UART0
+#define UART_QUEUE_SIZE    20            // Размер очереди событий
+
+#define UART_BAUD_RATE     115200        // Скорость 115200 бод
+
+
+// #define TXD_PIN (GPIO_NUM_1)      // TXD0
+// #define RXD_PIN (GPIO_NUM_3)      // RXD0
+// #define UART_PORT UART_NUM_0   
 
 // Очередь UART
 static QueueHandle_t uart_queue;
-
+static QueueHandle_t uart0_queue;
+static const char *TAG_USB = "UART_RETRANSLATOR";
 
 
 // Названия событий кнопок
@@ -52,6 +63,21 @@ static const char *button_event_names[] = {
     [BUTTON_LONG_PRESS_UP] = "BUTTON_LONG_PRESS_UP",
 };
 
+
+
+void uart_init(void) {
+    // Конфигурация UART0
+    uart_config_t uart0_config = {
+        .baud_rate = UART_BAUD_RATE,
+        .data_bits = UART_DATA_8_BITS,
+        .parity    = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+    };
+    uart_param_config(UART0_PORT_NUM, &uart0_config);
+    uart_set_pin(UART0_PORT_NUM, UART0_TXD_PIN, UART0_RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    uart_driver_install(UART0_PORT_NUM, BUF_SIZE, BUF_SIZE, UART_QUEUE_SIZE, &uart0_queue, 0);
+}    
 
 
 static void do_add_speed(void* parameter) {
@@ -110,69 +136,167 @@ static void do_add_speed(void* parameter) {
 
 
 
-// Обработчики событий кнопок
-static void button_event_break(void *arg, void *data) {
-    //printf("button_event_break\n");
+
+static void button_event_rigth_break(void *arg, void *data) {   
     if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
-        //printf("do button_event_break\n");
-        state.break_long = false;
+        printf("button_event_rigth_break\n");
         state.break_level = 0;
+        state.break_long = true;
         gpio_set_level(BLUE_LED_PIN, 1);
         DoLight(128);
         state.controllerBrake = false;
-        state.break_volt_bl = state.volt_bl;
-        state.break_croiuse_level = state.croiuse_level;
         state.addspeed = false;
         stop_Speed(true);
         setCurrentLevel();
         state.change_event=20;
         xSemaphoreGive(state_mutex);
     }
-    //printf("button_event_break_end--------\n");
 }
 
-static void button_event_break_long(void *arg, void *data) { /// сработал долгий тормоз
-    //printf("button_event_break_long\n");
+
+
+// Обработчики событий кнопок
+
+static void button_event_break(void *arg, void *data) {
+    printf("button_event_break\n");
     if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
-        state.break_long = true;
+        //printf("do button_event_break\n");
+        if (state.start_break_event){  /// защита от двойного срабатывания
+            xSemaphoreGive(state_mutex);
+            return;
+        }
+        state.break_level = 0;
+        gpio_set_level(BLUE_LED_PIN, 1);
+        DoLight(128);
+        state.controllerBrake = false;
+        //state.break_volt_bl = state.volt_bl;
+        //printf("state.break_volt_bl1=%d\n",state.break_volt_bl);       
+        //state.break_croiuse_level = state.croiuse_level;
         state.addspeed = false;
-        state.current_amper = 3; // Сбрасываем в исходное состояние
+        //stop_Speed(true);
+        //setCurrentLevel();
+        state.change_event=20;
+
+        
+
         xSemaphoreGive(state_mutex);
     }
-    //printf("button_event_break_long_end--------\n");
 }
 
+
+
+// static void button_event_break(void *arg, void *data) {
+//     //printf("button_event_break\n");
+//     if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+//         //printf("do button_event_break\n");
+//         state.break_long = false;
+//         state.break_level = 0;
+//         gpio_set_level(BLUE_LED_PIN, 1);
+//         DoLight(128);
+//         state.controllerBrake = false;
+//         state.break_volt_bl = state.volt_bl;
+//         state.break_croiuse_level = state.croiuse_level;
+//         state.addspeed = false;
+//         stop_Speed(true);
+//         setCurrentLevel();
+//         state.change_event=20;
+//         xSemaphoreGive(state_mutex);
+//     }
+//     //printf("button_event_break_end--------\n");
+// }
+
+// static void button_event_break_long(void *arg, void *data) { /// сработал долгий тормоз
+//     //printf("button_event_break_long\n");
+//     if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+//         state.break_long = true;
+//         state.addspeed = false;
+//         state.current_amper = 3; // Сбрасываем в исходное состояние
+//         xSemaphoreGive(state_mutex);
+//     }
+//     //printf("button_event_break_long_end--------\n");
+// }
+
+
 static void button_event_break_end(void *arg, void *data) {
-    //printf("button_event_break_end\n");
+    printf("button_event_break_end\n");
     if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
         gpio_set_level(BLUE_LED_PIN, 0);
-        state.rpm_controller = 0;
-        if (!state.break_long) {
-            //printf("state.break_volt_bl=%d",state.break_volt_bl);            
-            //printf("rpm_controller=%d",state.rpm_controller);
-            //printf("rpm_controller=%d\n",state.rpm_controller);
-            state.volt_bl = state.break_volt_bl;
+
+
+            // Остановка задачи подсчёта
+
+
+        if (!state.break_long) { /// не была нажата правая
+            printf("state.volt_bl2=%d\n",state.volt_bl);            
+            //state.volt_bl = state.break_volt_bl;
             if (state.volt_bl > 0) {
                 state.croiuse_level = get_level(true) - 1;
+                printf("state.croiuse_level=%d\n",state.croiuse_level);        
                 if (state.croiuse_level < 1) state.croiuse_level = 0;
-                state.cr = -1;
-                state.crouise_on = true;
-                state.speed_up = true;
+                if (state.croiuse_level==0){
+                    state.change_event=state.croiuse_level;
+                    state.break_level = 1;
+                }
+                else {
+                //state.cr = -1;
+                //state.crouise_on = true;
+                //state.speed_up = true;
+                /// для данного контроллера без использования add_speed  state.break_level = 1;
                 //state.break_level = 1;
-                state.volt_bl = 0;
-                setCrouise(state.croiuse_level);
+                //state.volt_bl = 0;
+                //setCrouise(state.croiuse_level);
                 state.change_event=state.croiuse_level+1;
+                state.addspeed=true;                
+                     }
             }
         }
-        else state.break_level = 1;
-        state.break_volt_bl = 0;
+        else {
+            state.break_level = 1;
+            state.volt_bl = 0;
+        }
+        //state.break_volt_bl = 0;        
         state.break_long = false;
         DoLight(0);
+        state.start_break_event=false;
         xSemaphoreGive(state_mutex);
     }
      //printf("button_event_break_end_end--------\n");
      //printf("state.break_level=%d\n",state.break_level);
 }
+
+
+
+// static void button_event_break_end(void *arg, void *data) {
+//     //printf("button_event_break_end\n");
+//     if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+//         gpio_set_level(BLUE_LED_PIN, 0);
+//         state.rpm_controller = 0;
+//         if (!state.break_long) {
+//             //printf("state.break_volt_bl=%d",state.break_volt_bl);            
+//             //printf("rpm_controller=%d",state.rpm_controller);
+//             //printf("rpm_controller=%d\n",state.rpm_controller);
+//             state.volt_bl = state.break_volt_bl;
+//             if (state.volt_bl > 0) {
+//                 state.croiuse_level = get_level(true) - 1;
+//                 if (state.croiuse_level < 1) state.croiuse_level = 0;
+//                 state.cr = -1;
+//                 state.crouise_on = true;
+//                 state.speed_up = true;
+//                 //state.break_level = 1;
+//                 state.volt_bl = 0;
+//                 setCrouise(state.croiuse_level);
+//                 state.change_event=state.croiuse_level+1;
+//             }
+//         }
+//         else state.break_level = 1;
+//         state.break_volt_bl = 0;
+//         state.break_long = false;
+//         DoLight(0);
+//         xSemaphoreGive(state_mutex);
+//     }
+//      //printf("button_event_break_end_end--------\n");
+//      //printf("state.break_level=%d\n",state.break_level);
+// }
 
 static void button_event_cb1(void *arg, void *data) {
     printf("button_event_cb1\n");
@@ -234,11 +358,32 @@ static void button_event_cb2(void *arg, void *data) {
 }
 
 // Инициализация кнопок
-static void button_init_break(uint32_t button_num) {
-    button_config_t btn_cfg = {
-        .long_press_time = 3000,
-        .short_press_time = 50,
+static void button_init_rigth_break(uint32_t button_num) {
+    // button_config_t btn_cfg = {
+    //     .long_press_time = 3000,
+    //     .short_press_time = 50,
+    // };
+    button_config_t btn_cfg = {0};
+    button_gpio_config_t gpio_cfg = {
+        .gpio_num = button_num,
+        .active_level = BUTTON_ACTIVE_LEVEL,
     };
+    button_handle_t btn;
+    esp_err_t ret = iot_button_new_gpio_device(&btn_cfg, &gpio_cfg, &btn);
+    assert(ret == ESP_OK);
+    ret |= iot_button_register_cb(btn, BUTTON_PRESS_DOWN, NULL, button_event_rigth_break, NULL);
+    ret |= iot_button_register_cb(btn, BUTTON_PRESS_END, NULL, button_event_break_end, NULL);
+    ESP_ERROR_CHECK(ret);
+}
+
+
+// Инициализация кнопок
+static void button_init_break(uint32_t button_num) {
+    // button_config_t btn_cfg = {
+    //     .long_press_time = 3000,
+    //     .short_press_time = 50,
+    // };
+    button_config_t btn_cfg = {0};
     button_gpio_config_t gpio_cfg = {
         .gpio_num = button_num,
         .active_level = BUTTON_ACTIVE_LEVEL,
@@ -247,7 +392,7 @@ static void button_init_break(uint32_t button_num) {
     esp_err_t ret = iot_button_new_gpio_device(&btn_cfg, &gpio_cfg, &btn);
     assert(ret == ESP_OK);
     ret |= iot_button_register_cb(btn, BUTTON_PRESS_DOWN, NULL, button_event_break, NULL);
-    ret |= iot_button_register_cb(btn, BUTTON_LONG_PRESS_START, NULL, button_event_break_long, NULL);
+    // ret |= iot_button_register_cb(btn, BUTTON_LONG_PRESS_START, NULL, button_event_break_long, NULL);
     ret |= iot_button_register_cb(btn, BUTTON_PRESS_END, NULL, button_event_break_end, NULL);
     ESP_ERROR_CHECK(ret);
 }
@@ -286,6 +431,7 @@ static void init_button(void) {
     button_init1(BUTTON_NUM1);
     button_init2(BUTTON_NUM2);
     button_init_break(BREAK_PIN);
+    button_init_rigth_break(BREAK_RIGTH_PIN);
 }
 
 // Обработка данных UART
@@ -313,6 +459,74 @@ static void sendBufferToController(uint8_t *buffer, uint8_t bufferSize) {
     uart_write_bytes(UART_NUM, (const char*)buffer, bufferSize);
     uart_wait_tx_done(UART_NUM, 2000 / portTICK_PERIOD_MS);
 }
+
+
+void uart0_to_uart2_task(void *pvParameters) {
+    uart_event_t event;
+    uint8_t buffer[BUF_SIZE];
+    while (1) {
+        if (xQueueReceive(uart0_queue, &event, portMAX_DELAY)) {
+            switch (event.type) {
+                case UART_DATA:
+                    int len = uart_read_bytes(UART0_PORT_NUM, buffer, event.size, 0);
+                    ESP_LOGI(TAG, "UART0 -> UART2: %d байт", len);
+                    if (len > 0) {
+                        uart_write_bytes(UART_NUM, (const char *)buffer, len);
+                        ESP_LOGI(TAG, "UART0 -> UART2: %d байт", len);
+                    }
+                    break;
+                case UART_FIFO_OVF:
+                    ESP_LOGE(TAG, "UART0: Переполнение FIFO");
+                    uart_flush_input(UART0_PORT_NUM);
+                    break;
+                case UART_BUFFER_FULL:
+                    ESP_LOGE(TAG, "UART0: Буфер полный");
+                    uart_flush_input(UART0_PORT_NUM);
+                    break;
+                default:
+                    ESP_LOGI(TAG, "UART0: Неизвестное событие: %d", event.type);
+                    break;
+            }
+        }
+    }
+    //free(rx_data);
+    vTaskDelete(NULL);
+}
+
+void uart2_to_uart0_task(void *pvParameters) {
+    uint8_t buffer[BUF_SIZE];
+    uart_event_t event;
+    uint8_t *rx_data = (uint8_t *)malloc(BUF_SIZE);
+    xTaskCreate(uart0_to_uart2_task, "uart0_to_uart2", 4096, NULL, 5, NULL);
+    while (1) {
+        if (xQueueReceive(uart_queue, &event, portMAX_DELAY)) {
+        switch (event.type) {
+               case UART_DATA:             
+        int len = uart_read_bytes(UART_NUM, rx_data, event.size, RX_TIMEOUT);
+        if (len > 0) {
+            uart_write_bytes(UART0_PORT_NUM, (const char *)buffer, len);
+            ESP_LOGI(TAG_USB, "UART2 -> UART0: %d байт", len);
+            break;
+            case UART_FIFO_OVF:
+            ESP_LOGE("UART", "FIFO Overflow");
+            uart_flush_input(UART_NUM);
+            xQueueReset(uart_queue);
+            break;
+        case UART_BUFFER_FULL:
+            ESP_LOGE("UART", "Buffer Full");
+            uart_flush_input(UART_NUM);
+            xQueueReset(uart_queue);
+            break;
+        default:
+            break;     
+        } 
+        }
+      }
+    }
+    free(rx_data);
+    vTaskDelete(NULL);
+}
+
 
 static void uart_task(void *arg) {
     uart_event_t event;
@@ -451,12 +665,12 @@ static int null_output(struct _reent *r, void *fd, const char *ptr, int len) {
     return len; // Возвращаем длину, как будто вывод успешен
 }
 void app_main(void) {
-    //esp_log_set_vprintf(log_dummy); // Устанавливаем заглушку на логи esp
+    esp_log_set_vprintf(log_dummy); // Устанавливаем заглушку на логи esp
 
     setvbuf(stdout, NULL, _IONBF, 0); // Отключаем буферизацию  
     stdout->_write = null_output;     // отключает вывод логов по printf
 
-
+    uart_init();
     controller_init();
     init_button();
     configure_led();
@@ -502,11 +716,15 @@ void app_main(void) {
 
     ESP_ERROR_CHECK(uart_param_config(UART_NUM, &uart_config));
     ESP_ERROR_CHECK(uart_set_pin(UART_NUM, 17, 16, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-    ESP_ERROR_CHECK(uart_set_pin(UART_PORT, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    //ESP_ERROR_CHECK(uart_set_pin(UART_PORT, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM, BUF_SIZE, BUF_SIZE, 20, &uart_queue, 0));
     ESP_ERROR_CHECK(uart_enable_rx_intr(UART_NUM));
 
     printf("Start prog\n");
+
+    
+    //xTaskCreate(uart2_to_uart0_task, "uart2_to_uart0", 4096, NULL, 5, NULL);
+
     xTaskCreatePinnedToCore(loop_controller, "Loop_controller", 4096, NULL, 10, NULL, 1);
-    start_ble();
+    start_ble();    
 }

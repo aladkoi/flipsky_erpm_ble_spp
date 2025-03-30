@@ -318,6 +318,18 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
                                         xTaskCreate(send_task, "send_task", 2048, NULL, 5, &send_task_handle);
                                     }
                                 }
+                                else if (payload[2]==2 || payload[2]==3) { /// 2 - ограничение off 3- ограничение on
+                                    if (payload[2]==2){
+                                        save_bool_to_nvs(false);
+                                        state.limit_speed=false;
+                                        len_crouise=5;
+                                    }
+                                    else {
+                                        save_bool_to_nvs(true); 
+                                        state.limit_speed=true;                
+                                        len_crouise=3;
+                                         }
+                                }
                                 else if (payload[2] == 1) { // Тормоз
                                     state.break_level = 0;
                                     state.cr = -1;
@@ -406,7 +418,10 @@ void start_ble() {
     // Регистрация коллбэка и запуск SPP
     ESP_ERROR_CHECK(esp_spp_register_callback(esp_spp_cb));
     ESP_ERROR_CHECK(esp_spp_enhanced_init(&spp_config));
-
+    nvs_init();
+    state.limit_speed=read_bool_from_nvs();
+    if (state.limit_speed)len_crouise=3;
+    else len_crouise=5;
     // Создание задачи для отправки данных
     
 

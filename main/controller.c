@@ -9,14 +9,14 @@ ControllerState_t state = {
     .Vbatt = 0.0f,
     .rpm_controller = 0,
     .volt_bl = 0,
-    .break_volt_bl = 0,
+    //.break_volt_bl = 0,
     .start_level = 0,
     .current_rpm = 0,
     .current_level = 0,
     .current_level_speed = 0,
     .current_level_rpm = 0,
     .croiuse_level = -1,
-    .break_croiuse_level = -1,
+    //.break_croiuse_level = -1,
     .controllerBrake = false,
     .currentSpeed = 0,
     .cr = -1,
@@ -33,12 +33,14 @@ ControllerState_t state = {
     .break_level = 1,
     .operation = 0,
     .change_event=0,
-    .volt_add_speed=0
+    .volt_add_speed=0,
+    .start_break_event=false,
+    .limit_speed=false
 };
 
 volatile float level_crouise[6] = {0, 21.4, 33.2, 46.0, 58.4, 95.0};
-volatile int rpm_crouise[6] = {2611, 4700, 7330, 10115, 12870, 20800};
-const int len_crouise = 5; // Размер массива круиза минус 1
+volatile int rpm_crouise[6] = {2611, 4700, 7330, 9699, 12870, 20800};
+volatile int len_crouise = 5; // Размер массива круиза минус 1
 
 
 SemaphoreHandle_t state_mutex = NULL;
