@@ -7,9 +7,10 @@
 void nvs_init(void);
 
 // Сохранение bool значения в NVS
-void save_bool_to_nvs(bool value);
+void save_to_nvs(uint8_t data);
+void save_to_nvs1(uint8_t data);
 
 // Чтение bool значения из NVS
-bool read_bool_from_nvs(void);
+void read_from_nvs(void);
 
 #endif // NVS_STORAGE_H

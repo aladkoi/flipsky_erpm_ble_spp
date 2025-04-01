@@ -5,12 +5,12 @@
 
 // Инициализация состояния
 ControllerState_t state = {
+    //.name_cont = "FT85BS",
     .name_cont = "",
     .Vbatt = 0.0f,
     .rpm_controller = 0,
     .volt_bl = 0,
     //.break_volt_bl = 0,
-    .start_level = 0,
     .current_rpm = 0,
     .current_level = 0,
     .current_level_speed = 0,
@@ -35,7 +35,11 @@ ControllerState_t state = {
     .change_event=0,
     .volt_add_speed=0,
     .start_break_event=false,
-    .limit_speed=false
+    .limit_speed=false,
+    .auto_speed=true,
+    .start_level=7,
+    .auto_start_level=7,
+    .smart_brake=true
 };
 
 volatile float level_crouise[6] = {0, 21.4, 33.2, 46.0, 58.4, 95.0};
@@ -106,13 +110,11 @@ return cr;
 
 void select_level(int crouise) {
     if (state.volt_bl == 0 || (crouise > -1 && crouise < (len_crouise + 1))) {
+        state.volt_bl = rpm_crouise[crouise];
       if (!state.speed_up) {
-          state.volt_bl = rpm_crouise[crouise];
           state.currentSpeed = rpm_crouise[crouise];
-      } else {
-          
-          state.volt_bl = rpm_crouise[crouise];
-          if (crouise > 0) {
+      } else {          
+          if (crouise > 0 && state.auto_speed) {
               state.addspeed = true;
           }
       }
@@ -120,25 +122,35 @@ void select_level(int crouise) {
   }  
 }
 
-float start_crouise(void) {
-float result = 0.0f;
-  state.croiuse_level = 0;
-  select_level(state.croiuse_level);
-  if (state.volt_bl <= state.start_level) state.volt_bl = rpm_crouise[0];
-  if (state.volt_bl > 20800) state.volt_bl = 20800;
-  //getDuty(state.volt_bl);
-  state.current_level = state.volt_bl;
-  result = state.volt_bl;
-return result;
+int start_crouise(void) {
+printf("start_crouise=%d\n",state.start_level);    
+state.volt_bl=erpm_step[state.start_level];
+state.croiuse_level = get_level(true);
+return state.volt_bl;
+// int result = rpm_crouise[state.start_level];
+//   state.croiuse_level = 0;
+//   select_level(state.croiuse_level);
+//   if (state.volt_bl <= erpm_step[state.start_level]) state.volt_bl = rpm_crouise[state.start_level];
+//   if (state.volt_bl > rpm_crouise[len_crouise]) state.volt_bl = rpm_crouise[len_crouise];
+//   //getDuty(state.volt_bl);
+//   state.current_level = state.volt_bl;
+//   result = state.volt_bl;
+//   printf("return start_crouise=%d\n",result);    
+// return result;
 }
 
 
 void AddSpeed(void) {
+  printf("AddSpeed\n");
+  printf("state.volt_bl=%d\n",state.volt_bl);
+  printf("rpm_crouise[len_crouise]=%d\n",rpm_crouise[len_crouise]);
   if (state.break_level == 1 && state.volt_bl < rpm_crouise[len_crouise]) {
-      if (state.volt_bl <= state.start_level || state.volt_bl == 0) {
+      if (state.volt_bl < erpm_step[state.start_level] || state.volt_bl == 0) {
           state.volt_bl = start_crouise();
       } else {
+          printf("getStep\n");
           state.volt_bl = getStep(true, state.volt_bl);
+          printf("state.volt_bl=%d\n",state.volt_bl);       
           if (state.volt_bl > rpm_crouise[len_crouise]) state.volt_bl = rpm_crouise[len_crouise];
       }
   }
@@ -174,14 +186,21 @@ void BUTTON_PRESS_REPEAT_ADD(void){
 
 void BUTTON_SINGLE_CLICK_ADD(void){
     state.break_level=1;
-    if (state.croiuse_level == -1 && state.rpm_controller == 0) {
-        state.croiuse_level = 0;
+    if (state.croiuse_level == -1 && state.rpm_controller == 0) {        
+        printf("setCrouise()%d=\n",state.croiuse_level);
+        state.volt_bl=erpm_step[state.start_level];
+        state.croiuse_level = get_level(true);
+        // state.croiuse_level = 0;
         state.cr=-1;
         state.crouise_on = true;
         state.speed_up = true;
         state.change_event=1;
-        setCrouise(state.croiuse_level);
+        printf("state.volt_bl=%d\n",state.volt_bl);
+        printf("state.croiuse_level%d=\n",state.croiuse_level);
+        //setCrouise(state.croiuse_level);
+        //start_crouise();
     } else {
+        printf("do AddSpeed()");
         AddSpeed();
         state.currentSpeed = 0;
     }

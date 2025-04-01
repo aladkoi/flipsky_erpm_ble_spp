@@ -23,7 +23,13 @@ static uint32_t spp_handle = 0; // Дескриптор подключения S
 
 //#define SEND_BUFFER_SIZE (sizeof(send_buffer) / sizeof(send_buffer[0])) 
 
-// Функция для вычисления контрольной суммы Adler-16
+// Функция для извлечения битов 4-7 из байта
+static inline uint8_t get_bits_4_to_7(uint8_t data) {
+    return (data >> 4) & 0x0F;  // Сдвиг вправо на 4 и маска 00001111
+}
+
+
+// Функция вычисления Adler-16 с учетом только битов 4-7
 uint8_t* calculate_adler16(uint8_t* data, size_t length) {
     uint16_t sum1 = 0x1A; // Начальное значение для sum1
     uint16_t sum2 = 0x2B; // Начальное значение для sum2
@@ -31,13 +37,14 @@ uint8_t* calculate_adler16(uint8_t* data, size_t length) {
 
     // Проходим по массиву данных
     for (size_t i = 0; i < length; i++) {
-        sum1 = (sum1 + data[i]) % MOD_ADLER; // Сумма байтов
-        sum2 = (sum2 + (sum1 ^ (data[i] << 1))) % MOD_ADLER; // Усложнённая сумма
+        uint8_t bits_4_7 = get_bits_4_to_7(data[i]);  // Извлекаем биты 4-7
+        sum1 = (sum1 + bits_4_7) % MOD_ADLER;         // Сумма битов 4-7
+        sum2 = (sum2 + (sum1 ^ (bits_4_7 << 1))) % MOD_ADLER; // Усложнённая сумма
     }
 
     // Комбинируем результаты с побитовыми операциями
     uint16_t checksum16 = (sum2 << 8) | sum1;
-    checksum16 = checksum16 ^ 0x55AA; // XOR с константой для уникальности
+    checksum16 = checksum16 ^ 0x55AA; // XOR с константой
     checksum16 = checksum16 & 0xFFFF; // Ограничиваем до 16 бит
 
     // Извлекаем младший и старший байты
@@ -45,7 +52,11 @@ uint8_t* calculate_adler16(uint8_t* data, size_t length) {
     uint8_t high_byte = (checksum16 >> 8) & 0xFF;
 
     // Выделяем память для результата (2 байта)
-    static uint8_t checksum[2]; // Статический массив для возврата
+    uint8_t* checksum = (uint8_t*)malloc(2 * sizeof(uint8_t));
+    if (checksum == NULL) {
+        ESP_LOGE(TAG_BL, "Ошибка выделения памяти для checksum");
+        return NULL;
+    }
     checksum[0] = low_byte;  // Младший байт
     checksum[1] = high_byte; // Старший байт
 
@@ -286,7 +297,7 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
             break;
 
         case ESP_SPP_DATA_IND_EVT:
-            //ESP_LOG_BUFFER_HEX(TAG_BL, param->data_ind.data, param->data_ind.len);
+            ESP_LOG_BUFFER_HEX(TAG_BL, param->data_ind.data, param->data_ind.len);
 
             // Копируем весь пакет в буфер (без смещения на 4 байта)
             uint32_t payload_length = param->data_ind.len; // Весь пакет — полезная нагрузка
@@ -310,6 +321,7 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
                         uint16_t crc3 = (crc2[0] << 8) | crc2[1];
 
                         if (crc1 == crc3) { // Данные корректны
+
                             if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
                                 // Обработка команд
                                 if (payload[0] == 10) { // Запрос на подключение
@@ -318,17 +330,19 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
                                         xTaskCreate(send_task, "send_task", 2048, NULL, 5, &send_task_handle);
                                     }
                                 }
-                                else if (payload[2]==2 || payload[2]==3) { /// 2 - ограничение off 3- ограничение on
-                                    if (payload[2]==2){
-                                        save_bool_to_nvs(false);
-                                        state.limit_speed=false;
-                                        len_crouise=5;
-                                    }
-                                    else {
-                                        save_bool_to_nvs(true); 
-                                        state.limit_speed=true;                
-                                        len_crouise=3;
-                                         }
+                                else if (payload[2]>1) { /// 2 - ограничение off 3- ограничение on
+                                    save_to_nvs((uint8_t)payload[2]);
+                                    save_to_nvs1((uint8_t)payload[1]);   
+                                    // if (payload[2]==2){
+                                    //     save_to_nvs(payload[2]);
+                                    //     state.limit_speed=false;
+                                    //     len_crouise=5;
+                                    // }
+                                    // else {
+                                    //     save_bool_to_nvs(true); 
+                                    //     state.limit_speed=true;                
+                                    //     len_crouise=3;
+                                    //      }
                                 }
                                 else if (payload[2] == 1) { // Тормоз
                                     state.break_level = 0;
@@ -343,7 +357,7 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
                                     state.break_level = 1;
                                     DoLight(0);
                                 }
-                                else if (payload[1] > 0) { // Круиз
+                                else if (payload[1] > 0 && payload[1] < 7) { // Круиз
                                     state.crouise_on = true;
                                     state.speed_up = true;
                                     state.croiuse_level = payload[1] - 1;
@@ -361,6 +375,11 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
                                 }
                                 xSemaphoreGive(state_mutex);
                             }
+                            
+                                   if (crc2 != NULL) {
+                                          free(crc2);
+                                          crc2 = NULL; // Обнуляем указатель после освобождения (хорошая практика)
+                                           }
                         } else {
                             ESP_LOGE(TAG_BL, "CRC mismatch: received 0x%04x, calculated 0x%04x", crc1, crc3);
                         }
@@ -419,9 +438,10 @@ void start_ble() {
     ESP_ERROR_CHECK(esp_spp_register_callback(esp_spp_cb));
     ESP_ERROR_CHECK(esp_spp_enhanced_init(&spp_config));
     nvs_init();
-    state.limit_speed=read_bool_from_nvs();
+    read_from_nvs();
     if (state.limit_speed)len_crouise=3;
     else len_crouise=5;
+    rpm_crouise[0]=erpm_step[state.start_level];
     // Создание задачи для отправки данных
     
 

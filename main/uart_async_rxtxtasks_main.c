@@ -49,6 +49,7 @@
 static QueueHandle_t uart_queue;
 static QueueHandle_t uart0_queue;
 static const char *TAG_USB = "UART_RETRANSLATOR";
+static bool logging=false;
 
 
 // Названия событий кнопок
@@ -94,11 +95,13 @@ static void do_add_speed(void* parameter) {
                 else
                     state.current_amper = getCurrentIndexSpeed(state.rpm_controller);
             } else {
-                state.current_amper = 3;
+                state.current_amper = state.auto_start_level;
             }
+
             bool local_addspeed = state.addspeed;
             if (local_addspeed){
                 state.break_level=1;
+                if (state.current_amper<state.auto_start_level)state.current_amper=state.auto_start_level;
                 //printf("state.break_level333=%d",state.break_level=1); 
             }
             xSemaphoreGive(state_mutex);
@@ -107,14 +110,16 @@ static void do_add_speed(void* parameter) {
                 //last_check_time = xTaskGetTickCount();
                 if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
                     last_index = find_index_linear(state.volt_bl);
-                    if (last_index < 0) last_index = 0;
+                    if (last_index < 0) last_index = 0;                    
                     state.target_erpm = erpm_step[state.current_amper];
+                    printf("========state.target_erp1=%d\n",state.target_erpm);
                     xSemaphoreGive(state_mutex);
                 }
 
                 while (state.break_level == 1 && local_addspeed && state.current_amper <= last_index) {
                     if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
                         state.target_erpm = erpm_step[state.current_amper];
+                        printf("++++++++state.target_erpm2=%d\n",state.target_erpm);
                         state.current_amper++;
                         local_addspeed = state.addspeed;
                         xSemaphoreGive(state_mutex);
@@ -136,7 +141,7 @@ static void do_add_speed(void* parameter) {
 
 
 
-
+/// это передний тормоз
 static void button_event_rigth_break(void *arg, void *data) {   
     if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
         printf("button_event_rigth_break\n");
@@ -156,11 +161,12 @@ static void button_event_rigth_break(void *arg, void *data) {
 
 
 // Обработчики событий кнопок
-
+/// это задний тормоз
 static void button_event_break(void *arg, void *data) {
     printf("button_event_break\n");
     if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
         //printf("do button_event_break\n");
+        printf("state.volt_bl_break_11=%d\n",state.volt_bl);
         if (state.start_break_event){  /// защита от двойного срабатывания
             xSemaphoreGive(state_mutex);
             return;
@@ -174,11 +180,17 @@ static void button_event_break(void *arg, void *data) {
         //state.break_croiuse_level = state.croiuse_level;
         state.addspeed = false;
         //stop_Speed(true);
-        //setCurrentLevel();
+        //setCurrentLevel();        
+        printf("state.smart_brake=%s\n", state.smart_brake ? "true" : "false");
+        if (!state.smart_brake){
+            state.break_long=true;
+            stop_Speed(true);
+            setCurrentLevel();
+        }
         state.change_event=20;
-
-        
-
+        printf("state.break_long=%s\n", state.break_long ? "true" : "false");
+        printf("state.volt_bl_break_12=%d\n",state.volt_bl);
+        printf("state.croiuse_level_12=%d\n",state.croiuse_level);        
         xSemaphoreGive(state_mutex);
     }
 }
@@ -227,14 +239,15 @@ static void button_event_break_end(void *arg, void *data) {
 
 
         if (!state.break_long) { /// не была нажата правая
-            printf("state.volt_bl2=%d\n",state.volt_bl);            
+            printf("state.volt_bl_left_break_end=%d\n",state.volt_bl);            
             //state.volt_bl = state.break_volt_bl;
-            if (state.volt_bl > 0) {
-                state.croiuse_level = get_level(true) - 1;
+            if (state.volt_bl > 0) { 
+                //state.croiuse_level = get_level(true) - 1;
                 printf("state.croiuse_level=%d\n",state.croiuse_level);        
-                if (state.croiuse_level < 1) state.croiuse_level = 0;
-                if (state.croiuse_level==0){
-                    state.change_event=state.croiuse_level;
+                //if (state.croiuse_level < 1) state.croiuse_level = 0;
+                if (!state.auto_speed){ /// если была начальная скорость или отключен плавный старт
+                    printf("state.croiuse_level_not_=%d\n",state.croiuse_level);
+                    state.change_event=state.croiuse_level+1;
                     state.break_level = 1;
                 }
                 else {
@@ -246,7 +259,7 @@ static void button_event_break_end(void *arg, void *data) {
                 //state.volt_bl = 0;
                 //setCrouise(state.croiuse_level);
                 state.change_event=state.croiuse_level+1;
-                state.addspeed=true;                
+                state.addspeed=true;      /// плавное увеличение скорости           
                      }
             }
         }
@@ -327,7 +340,7 @@ static void button_event_cb1(void *arg, void *data) {
         }
         xSemaphoreGive(state_mutex);
     }
-    //printf("button_event_cb1_end\n");
+    printf("button_event_cb1_end\n");
 }
 
 static void button_event_cb2(void *arg, void *data) {
@@ -610,11 +623,13 @@ static void loop_controller(void* parameter) {
                         sendBufferToController(telemetr_data, sizeof(telemetr_data));
                     } else {
                         if (state.break_level == 0) {
+                            printf("state.break_level == 0\n");
                             my_voltbl = 0;
                             sendBufferToController(stop_data, sizeof(stop_data));
                         } else {
                             if (state.volt_bl == 0 && state.current_level == 0) getDuty(0.0);
                             else if (state.addspeed) {
+                                printf("==state.addspeed\n");
                                 getSpeed(state.target_erpm);
                                 sendBufferToController(speed_data, sizeof(speed_data));
                                 state.croiuse_level = get_level(true) - 1;
@@ -622,8 +637,7 @@ static void loop_controller(void* parameter) {
                             } else {
                                 if (state.volt_bl == 0 && state.current_level > 0) state.volt_bl = state.current_level;
                                 if (state.volt_bl > 20800) state.volt_bl = 20800;
-                                //printf("setCurrentLevel() from loop_controller\n");
-                                //setCurrentLevel();
+                                //printf("setCurrentLevel() from loop_controller\n");                       
                                 if (my_voltbl != state.volt_bl) {
                                     my_voltbl = state.volt_bl;
                                     getSpeed(state.volt_bl);
@@ -665,11 +679,12 @@ static int null_output(struct _reent *r, void *fd, const char *ptr, int len) {
     return len; // Возвращаем длину, как будто вывод успешен
 }
 void app_main(void) {
+    if (!logging){
     esp_log_set_vprintf(log_dummy); // Устанавливаем заглушку на логи esp
 
     setvbuf(stdout, NULL, _IONBF, 0); // Отключаем буферизацию  
     stdout->_write = null_output;     // отключает вывод логов по printf
-
+    }
     uart_init();
     controller_init();
     init_button();

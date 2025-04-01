@@ -24,7 +24,7 @@ typedef struct {
     uint16_t rpm_controller;        // Текущие обороты
     int volt_bl;               // Уровень для передачи в контроллер
     int break_volt_bl;         // Уровень сигнала от мобильного при торможении
-    int start_level;           // Уровень начального старта
+    //int start_level;           // Уровень начального старта
     int current_rpm;           // Текущий уровень RPM для сохранения
     int current_level;         // Текущий уровень газа
     int current_level_speed;   // Уровень газа для возобновления скорости
@@ -49,7 +49,11 @@ typedef struct {
     int change_event;             // событие для мобильного приложения
     int volt_add_speed;
     bool start_break_event;
-    bool limit_speed;
+    bool limit_speed;  // ограничение скорости
+    bool auto_speed;   // плавное увеличение скорости
+    int start_level;  /// начальный уровень старта
+    int auto_start_level;  /// начальный уровень старта для  для плавного увеличения скорости
+    bool smart_brake; /// умный тормоз
 } ControllerState_t;
 
 // Глобальные переменные
@@ -66,7 +70,7 @@ void stop_Speed(bool status);
 void setCurrentLevel(void);
 int get_level(bool forward);
 void select_level(int crouise);
-float start_crouise(void);
+int start_crouise(void);
 void AddSpeed(void);
 void setCrouise(int crouise);
 void BUTTON_PRESS_REPEAT_ADD(void);
