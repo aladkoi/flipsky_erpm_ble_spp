@@ -39,7 +39,8 @@ ControllerState_t state = {
     .auto_speed=true,
     .start_level=7,
     .auto_start_level=7,
-    .smart_brake=true
+    .smart_brake=true,
+    .diagnostic=true
 };
 
 volatile float level_crouise[6] = {0, 21.4, 33.2, 46.0, 58.4, 95.0};
@@ -215,6 +216,7 @@ void BUTTON_SINGLE_CLICK_DEC(void){
         state.change_event=20;
     }
     setCurrentLevel();
+    printf("======state.volt_bl=%d\n",state.volt_bl);
 }
 
 void BUTTON_PRESS_REPEAT_DEC(void){

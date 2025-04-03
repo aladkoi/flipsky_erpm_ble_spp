@@ -54,6 +54,7 @@ typedef struct {
     int start_level;  /// начальный уровень старта
     int auto_start_level;  /// начальный уровень старта для  для плавного увеличения скорости
     bool smart_brake; /// умный тормоз
+    bool diagnostic;
 } ControllerState_t;
 
 // Глобальные переменные

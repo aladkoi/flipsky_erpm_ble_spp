@@ -12,6 +12,7 @@
 #define AUTO_START "auto_start"
 #define SMART_BREAK "smart_break"  /// умный тормоз
 
+
 static const char *TAG = "NVS_STORAGE";
 
 // Функция инициализации NVS
@@ -133,35 +134,75 @@ void save_to_nvs1(uint8_t data) {
     nvs_close(handle);
 }
 
-
+void savespeed_to_nvs(int data){
+    printf("--------savespeed_to_nvs---------\n");
+    nvs_handle_t handle;
+    esp_err_t ret;
+    //uint8_t value = 0;     
+    char buffer[9]; // Буфер для результирующей строки
+    snprintf(buffer, sizeof(buffer), "crousel%d", data);
+    printf("volt_bl=%d\n",state.volt_bl);
+    printf("state.croiuse_level=%d\n",data);
+    ret = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Ошибка открытия NVS0: %s", esp_err_to_name(ret));
+        return;
+    }
+    //if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+    printf(buffer);
+    nvs_set_u16(handle,buffer , state.volt_bl); 
+    nvs_commit(handle);
+    nvs_close(handle);
+    rpm_crouise[data]=state.volt_bl;
+    //xSemaphoreGive(state_mutex);
+    //}
+}
 
 // Функция чтения bool значения из NVS
 void read_from_nvs(void) {
     nvs_handle_t handle;
     esp_err_t ret;
+    char buffer[9];
     uint8_t value = 0;  // По умолчанию false
+    uint16_t speed = 0;
     printf("read_from_nvs\n");
     ret = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Ошибка открытия NVS для чтения: %s", esp_err_to_name(ret));
         return;
     }
-    nvs_get_u8(handle, NVS_KEY, &value);
-    state.limit_speed=(value != 0);
-    nvs_get_u8(handle, AUTO_SPEED, &value);
-    state.auto_speed=(value != 0);
-    nvs_get_u8(handle, START_SPEED, &value);
-    state.start_level=value;
-    nvs_get_u8(handle,  AUTO_START, &value);
-    state.auto_start_level=value;
-    nvs_get_u8(handle, SMART_BREAK, &value);
-    state.smart_brake=(value != 0);
-
+    if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
+    ret=nvs_get_u8(handle, NVS_KEY, &value);
+    if (ret == ESP_OK)state.limit_speed=(value != 0);
+    ret=nvs_get_u8(handle, AUTO_SPEED, &value);
+    if (ret == ESP_OK)state.auto_speed=(value != 0);
+    ret=nvs_get_u8(handle, START_SPEED, &value);
+    if (ret == ESP_OK)state.start_level=value;
+    ret=nvs_get_u8(handle,  AUTO_START, &value);
+    if (ret == ESP_OK)state.auto_start_level=value;
+    ret=nvs_get_u8(handle, SMART_BREAK, &value);
+    if (ret == ESP_OK)state.smart_brake=(value != 0);
+    for (int k = 0; k < 6; k++) {
+        snprintf(buffer, sizeof(buffer), "crousel%d", k);
+        ret=nvs_get_u16(handle, buffer, &speed); 
+        if (ret == ESP_OK) {
+        printf(buffer);
+        printf("rpm_crouise_index=%d\n",k);
+        printf("rpm_crouise_value=%d\n",speed);
+        if (speed>200){
+            rpm_crouise[k]=speed;
+        }
+        printf("rpm_crouise=%d\n",rpm_crouise[k]);
+        speed=0;
+        }
+    }            
     printf("state.limit_speed=%s\n", state.limit_speed ? "true" : "false");
     printf("state.auto_speed=%s\n", state.auto_speed ? "true" : "false");
     printf("state.smart_brake=%s\n", state.smart_brake ? "true" : "false");
     printf("state.start_level=%d\n", state.start_level);
     printf("state.auto_start_level=%d\n", state.auto_start_level);
+    xSemaphoreGive(state_mutex);
+    }
     nvs_close(handle);
 
 }

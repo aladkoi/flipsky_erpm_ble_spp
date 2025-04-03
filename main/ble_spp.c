@@ -13,7 +13,8 @@
 
 
 
-#define SPP_SERVER_NAME "BLE_FLIPSKY85"
+#define SPP_SERVER_NAME "BLE_ESP32_FLIPSKY85"
+//#define SPP_SERVER_NAME "FTESC BLE"
 #define TAG_BL "SPP"
 TaskHandle_t send_task_handle = NULL; 
 
@@ -324,12 +325,16 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
 
                             if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
                                 // Обработка команд
-                                if (payload[0] == 10) { // Запрос на подключение
+                                if (payload[0] == 255) { // Запрос на подключение
                                     spp_handle = param->srv_open.handle;
                                     if (send_task_handle == NULL) {
                                         xTaskCreate(send_task, "send_task", 2048, NULL, 5, &send_task_handle);
                                     }
                                 }
+                                else if (payload[0] == 128){   /// сохранение текущей скорости для круиза
+                                    //state.diagnostic=!state.diagnostic; //переключить поток на диагностику
+                                    savespeed_to_nvs(payload[1]);
+                                }    
                                 else if (payload[2]>1) { /// 2 - ограничение off 3- ограничение on
                                     save_to_nvs((uint8_t)payload[2]);
                                     save_to_nvs1((uint8_t)payload[1]);   
@@ -357,7 +362,7 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
                                     state.break_level = 1;
                                     DoLight(0);
                                 }
-                                else if (payload[1] > 0 && payload[1] < 7) { // Круиз
+                                else if (payload[1] > 0 && payload[1] < 10) { // Круиз
                                     state.crouise_on = true;
                                     state.speed_up = true;
                                     state.croiuse_level = payload[1] - 1;

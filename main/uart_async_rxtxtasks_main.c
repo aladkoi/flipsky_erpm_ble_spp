@@ -33,12 +33,12 @@
 #define BUF_SIZE 2048
 #define RX_TIMEOUT (1000 / portTICK_PERIOD_MS)
 
-#define UART0_PORT_NUM     UART_NUM_0    // UART0 (обычно для USB-to-Serial)
-#define UART0_TXD_PIN      GPIO_NUM_1    // TXD UART0
-#define UART0_RXD_PIN      GPIO_NUM_3    // RXD UART0
-#define UART_QUEUE_SIZE    20            // Размер очереди событий
+// #define UART0_PORT_NUM     UART_NUM_0    // UART0 (обычно для USB-to-Serial)
+// #define UART0_TXD_PIN      GPIO_NUM_1    // TXD UART0
+// #define UART0_RXD_PIN      GPIO_NUM_3    // RXD UART0
+// #define UART_QUEUE_SIZE    20            // 
 
-#define UART_BAUD_RATE     115200        // Скорость 115200 бод
+// #define UART_BAUD_RATE     115200        // Скорость 115200 бод
 
 
 // #define TXD_PIN (GPIO_NUM_1)      // TXD0
@@ -47,10 +47,15 @@
 
 // Очередь UART
 static QueueHandle_t uart_queue;
-static QueueHandle_t uart0_queue;
-static const char *TAG_USB = "UART_RETRANSLATOR";
+//static QueueHandle_t uart0_queue;
+//static const char *TAG_USB = "UART_RETRANSLATOR";
 static bool logging=false;
 
+static TaskHandle_t loop_controller_handle = NULL;
+// static TaskHandle_t uart0_controller_handle = NULL;
+static TaskHandle_t addspeed_controller_handle = NULL;
+static TaskHandle_t uart_task_handle = NULL;
+// static TaskHandle_t uart0_to_uart2_task_handle = NULL;
 
 // Названия событий кнопок
 static const char *button_event_names[] = {
@@ -66,19 +71,23 @@ static const char *button_event_names[] = {
 
 
 
-void uart_init(void) {
-    // Конфигурация UART0
-    uart_config_t uart0_config = {
-        .baud_rate = UART_BAUD_RATE,
-        .data_bits = UART_DATA_8_BITS,
-        .parity    = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-    };
-    uart_param_config(UART0_PORT_NUM, &uart0_config);
-    uart_set_pin(UART0_PORT_NUM, UART0_TXD_PIN, UART0_RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-    uart_driver_install(UART0_PORT_NUM, BUF_SIZE, BUF_SIZE, UART_QUEUE_SIZE, &uart0_queue, 0);
-}    
+// void uart_init(void) {
+
+//     uart_config_t uart0_config = {
+//         .baud_rate = 115200,
+//         .data_bits = UART_DATA_8_BITS,
+//         .parity = UART_PARITY_DISABLE,
+//         .stop_bits = UART_STOP_BITS_1,
+//         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+//         .rx_flow_ctrl_thresh = 122,
+//         .source_clk = UART_SCLK_DEFAULT, 
+//     };
+
+//     uart_param_config(UART0_PORT_NUM, &uart0_config);
+//     uart_set_pin(UART0_PORT_NUM, UART0_TXD_PIN, UART0_RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+//     uart_driver_install(UART0_PORT_NUM, BUF_SIZE, BUF_SIZE, UART_QUEUE_SIZE, &uart0_queue, 0);
+//     ESP_ERROR_CHECK(uart_enable_rx_intr(UART0_PORT_NUM));
+// }    
 
 
 static void do_add_speed(void* parameter) {
@@ -86,7 +95,7 @@ static void do_add_speed(void* parameter) {
     //const uint32_t CHECK_INTERVAL_MS = 450;
     //TickType_t last_check_time;
     int last_index = 0;
-
+    printf("start do_add_speed");
     while (1) {
         if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
             if (state.rpm_controller > 0) {
@@ -474,71 +483,77 @@ static void sendBufferToController(uint8_t *buffer, uint8_t bufferSize) {
 }
 
 
-void uart0_to_uart2_task(void *pvParameters) {
-    uart_event_t event;
-    uint8_t buffer[BUF_SIZE];
-    while (1) {
-        if (xQueueReceive(uart0_queue, &event, portMAX_DELAY)) {
-            switch (event.type) {
-                case UART_DATA:
-                    int len = uart_read_bytes(UART0_PORT_NUM, buffer, event.size, 0);
-                    ESP_LOGI(TAG, "UART0 -> UART2: %d байт", len);
-                    if (len > 0) {
-                        uart_write_bytes(UART_NUM, (const char *)buffer, len);
-                        ESP_LOGI(TAG, "UART0 -> UART2: %d байт", len);
-                    }
-                    break;
-                case UART_FIFO_OVF:
-                    ESP_LOGE(TAG, "UART0: Переполнение FIFO");
-                    uart_flush_input(UART0_PORT_NUM);
-                    break;
-                case UART_BUFFER_FULL:
-                    ESP_LOGE(TAG, "UART0: Буфер полный");
-                    uart_flush_input(UART0_PORT_NUM);
-                    break;
-                default:
-                    ESP_LOGI(TAG, "UART0: Неизвестное событие: %d", event.type);
-                    break;
-            }
-        }
-    }
-    //free(rx_data);
-    vTaskDelete(NULL);
-}
+// void uart0_to_uart2_task(void *pvParameters) {
+//     uart_event_t event;
+//     uint8_t buffer[BUF_SIZE];
+//     printf("start uart0_to_uart2_task");
+//     while (1) {
+//         if (xQueueReceive(uart0_queue, &event, portMAX_DELAY)) {
+//             switch (event.type) {
+//                 case UART_DATA:
+//                     int len = uart_read_bytes(UART0_PORT_NUM, buffer, event.size, 0);
+//                     //ESP_LOGI(TAG, "UART0 -> UART2: %d байт", len);
+//                     if (len > 0) {
+//                         ESP_LOGI(TAG, "UART0 -> UART2: %d байт", len);
+//                         ESP_LOG_BUFFER_HEX(TAG, buffer, len);
+//                         uart_write_bytes(UART_NUM, (const char *)buffer, len);
+//                         ESP_LOGI(TAG, "UART0 -> UART2: %d байт", len);
+//                     }
+//                     break;
+//                 case UART_FIFO_OVF:
+//                     ESP_LOGE(TAG, "UART0: Переполнение FIFO");
+//                     uart_flush_input(UART0_PORT_NUM);
+//                     break;
+//                 case UART_BUFFER_FULL:
+//                     ESP_LOGE(TAG, "UART0: Буфер полный");
+//                     uart_flush_input(UART0_PORT_NUM);
+//                     break;
+//                 default:
+//                     ESP_LOGI(TAG, "UART0: Неизвестное событие: %d", event.type);
+//                     break;
+//             }
+//         }
+//     }
+//     //free(rx_data);
+//     vTaskDelete(NULL);
+// }
 
-void uart2_to_uart0_task(void *pvParameters) {
-    uint8_t buffer[BUF_SIZE];
-    uart_event_t event;
-    uint8_t *rx_data = (uint8_t *)malloc(BUF_SIZE);
-    xTaskCreate(uart0_to_uart2_task, "uart0_to_uart2", 4096, NULL, 5, NULL);
-    while (1) {
-        if (xQueueReceive(uart_queue, &event, portMAX_DELAY)) {
-        switch (event.type) {
-               case UART_DATA:             
-        int len = uart_read_bytes(UART_NUM, rx_data, event.size, RX_TIMEOUT);
-        if (len > 0) {
-            uart_write_bytes(UART0_PORT_NUM, (const char *)buffer, len);
-            ESP_LOGI(TAG_USB, "UART2 -> UART0: %d байт", len);
-            break;
-            case UART_FIFO_OVF:
-            ESP_LOGE("UART", "FIFO Overflow");
-            uart_flush_input(UART_NUM);
-            xQueueReset(uart_queue);
-            break;
-        case UART_BUFFER_FULL:
-            ESP_LOGE("UART", "Buffer Full");
-            uart_flush_input(UART_NUM);
-            xQueueReset(uart_queue);
-            break;
-        default:
-            break;     
-        } 
-        }
-      }
-    }
-    free(rx_data);
-    vTaskDelete(NULL);
-}
+// void uart2_to_uart0_task(void *pvParameters) {
+//     uint8_t buffer[BUF_SIZE];
+//     uart_event_t event;
+//     uint8_t *rx_data = (uint8_t *)malloc(BUF_SIZE);
+//     printf("uart2_to_uart0_task");
+//     //if  (uart0_to_uart2_task_handle==NULL)xTaskCreatePinnedToCore(uart0_to_uart2_task, "uart0_to_uart2",4096, NULL, 5, &uart0_to_uart2_task_handle, 0);  
+//     while (1) {
+//         if (xQueueReceive(uart_queue, &event, portMAX_DELAY)) {
+//         switch (event.type) {
+//                case UART_DATA:             
+//         int len = uart_read_bytes(UART_NUM, rx_data, event.size, RX_TIMEOUT);
+//         if (len > 0) {
+//             ESP_LOGI(TAG, "UART2 -> UART0: %d байт", len);
+//             ESP_LOG_BUFFER_HEX(TAG, buffer, len);
+//             uart_write_bytes(UART0_PORT_NUM, (const char *)buffer, len);
+//             ESP_LOGI(TAG_USB, "UART2 -> UART0: %d байт", len);
+//             break;
+//             case UART_FIFO_OVF:
+//             ESP_LOGE("UART", "FIFO Overflow");
+//             uart_flush_input(UART_NUM);
+//             xQueueReset(uart_queue);
+//             break;
+//         case UART_BUFFER_FULL:
+//             ESP_LOGE("UART", "Buffer Full");
+//             uart_flush_input(UART_NUM);
+//             xQueueReset(uart_queue);
+//             break;
+//         default:
+//             break;     
+//         } 
+//         }
+//       }
+//     }
+//     free(rx_data);
+//     vTaskDelete(NULL);
+// }
 
 
 static void uart_task(void *arg) {
@@ -562,8 +577,7 @@ static void uart_task(void *arg) {
                                     ESP_LOGI("UART", "Connected to controller");
                                     gpio_set_level(POWER_PIN, 1);
                                     state.operation = 1;
-                                    state.count_telemtr = 0;
-                                    xTaskCreatePinnedToCore(do_add_speed, "Do add speed", 10000, NULL, 10, NULL, 0);
+                                    state.count_telemtr = 0;                                    
                                 }
                             } else if (state.operation == 1) {
                                 if (rx_length == 34 && rx_data[0] == 170 && rx_data[1] == 29 && rx_data[33] == 221) {                                    
@@ -607,8 +621,8 @@ static void loop_controller(void* parameter) {
     uint8_t telemetr_data[] = {0xaa, 0x04, 0x1a, 0x01, 0x00, 0x64, 0x17, 0x57, 0xdd};
     uint8_t stop_data[] = {170, 5, 4, 0, 0, 0, 0, 192, 213, 221};
     TickType_t wait_time = 2000 / portTICK_PERIOD_MS;
-
-    xTaskCreate(uart_task, "uart_task", 4096, NULL, 10, NULL);
+    
+    if (uart_task_handle==NULL)xTaskCreatePinnedToCore(uart_task, "uart_task",4096, NULL, 10, &uart_task_handle, 0);  
     while (1) {
         if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {
             if (strcmp(state.name_cont, "FT85BS") != 0) {
@@ -685,7 +699,7 @@ void app_main(void) {
     setvbuf(stdout, NULL, _IONBF, 0); // Отключаем буферизацию  
     stdout->_write = null_output;     // отключает вывод логов по printf
     }
-    uart_init();
+    // uart_init();
     controller_init();
     init_button();
     configure_led();
@@ -737,9 +751,51 @@ void app_main(void) {
 
     printf("Start prog\n");
 
-    
-    //xTaskCreate(uart2_to_uart0_task, "uart2_to_uart0", 4096, NULL, 5, NULL);
 
-    xTaskCreatePinnedToCore(loop_controller, "Loop_controller", 4096, NULL, 10, NULL, 1);
-    start_ble();    
+    //xTaskCreate(uart0_to_uart2_task, "uart0_to_uart2_task", 4096, NULL, 5, NULL);
+    xTaskCreatePinnedToCore(loop_controller, "Loop_controller", 4096, NULL, 10, &loop_controller_handle, 1);
+    //xTaskCreatePinnedToCore(loop_controller, "Loop_controller", 4096, NULL, 10, NULL, 1);
+    start_ble();   
+    //state.diagnostic=true;
+    while (1) {
+        if (xSemaphoreTake(state_mutex, portMAX_DELAY) == pdTRUE) {  
+        //printf("state.diagnostic=%s\n", state.diagnostic ? "true" : "false");
+        // if (state.diagnostic) {
+        //      if (loop_controller_handle != NULL) {
+        //         if (uart_task_handle!=NULL){
+        //             vTaskDelete(uart_task_handle);
+        //             uart_task_handle=NULL;
+        //                                    }     
+        //         vTaskDelete(loop_controller_handle);
+        //         loop_controller_handle = NULL; //                 
+        //                                          } 
+        //          if (uart0_controller_handle==NULL)xTaskCreate(uart2_to_uart0_task, "uart2_to_uart0", 4096, NULL, 5,&uart0_controller_handle);
+        //                      }
+        //  else {
+        //        if (uart0_controller_handle !=NULL){
+        //         if (uart0_to_uart2_task_handle!=NULL){
+        //             vTaskDelete(uart0_to_uart2_task_handle);    
+        //             uart0_to_uart2_task_handle=NULL;
+        //           }
+        //           vTaskDelete(uart0_controller_handle);     
+        //           uart0_controller_handle=NULL;                                    
+        //                                         }
+        //        if (loop_controller_handle==NULL)xTaskCreatePinnedToCore(loop_controller, "Loop_controller", 4096, NULL, 10, &loop_controller_handle, 1);
+        //        }                                  
+
+           
+                                                
+           if (!state.auto_speed && addspeed_controller_handle!=NULL){
+            vTaskDelete(addspeed_controller_handle);
+            addspeed_controller_handle=NULL;
+           }                                
+           if (state.auto_speed && addspeed_controller_handle==NULL)xTaskCreatePinnedToCore(do_add_speed, "Do add speed", 10000, NULL, 10, &addspeed_controller_handle, 0);  
+           if (!state.auto_speed && addspeed_controller_handle!=NULL){
+                  vTaskDelete(addspeed_controller_handle);     
+                  addspeed_controller_handle=NULL;     
+           }
+           xSemaphoreGive(state_mutex);
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+             }
 }
